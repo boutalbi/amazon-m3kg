@@ -1,0 +1,23 @@
+{
+ "algo": "CFKG",
+ "dataset": "M3KG-AKGsubset-Books",
+ "seed": 42,
+ "best_valid_score": 0.0501,
+ "best_valid_result": {
+  "recall@20": 0.1567,
+  "mrr@20": 0.0501,
+  "ndcg@20": 0.0709,
+  "hit@20": 0.1763,
+  "precision@20": 0.0091
+ },
+ "test_result": {
+  "recall@20": 0.1656,
+  "mrr@20": 0.0547,
+  "ndcg@20": 0.0761,
+  "hit@20": 0.1838,
+  "precision@20": 0.0095
+ },
+ "duration_s": 23273,
+ "date": "2026-09-12 19:24",
+ "device": "cpu"
+}

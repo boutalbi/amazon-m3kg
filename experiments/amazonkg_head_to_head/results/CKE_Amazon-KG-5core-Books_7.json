@@ -1,0 +1,23 @@
+{
+ "algo": "CKE",
+ "dataset": "Amazon-KG-5core-Books",
+ "seed": 7,
+ "best_valid_score": 0.0554,
+ "best_valid_result": {
+  "recall@20": 0.1692,
+  "mrr@20": 0.0554,
+  "ndcg@20": 0.0774,
+  "hit@20": 0.1887,
+  "precision@20": 0.0099
+ },
+ "test_result": {
+  "recall@20": 0.1709,
+  "mrr@20": 0.0593,
+  "ndcg@20": 0.0804,
+  "hit@20": 0.1928,
+  "precision@20": 0.01
+ },
+ "duration_s": 4317,
+ "date": "2026-09-14 05:07",
+ "device": "cuda:0"
+}

@@ -1,0 +1,5 @@
+torch==2.1.0
+recbole==1.2.1
+numpy==2.2.6
+pandas==2.3.3
+scipy==1.15.3

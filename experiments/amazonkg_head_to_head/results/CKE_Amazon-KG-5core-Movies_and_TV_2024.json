@@ -1,0 +1,23 @@
+{
+ "algo": "CKE",
+ "dataset": "Amazon-KG-5core-Movies_and_TV",
+ "seed": 2024,
+ "best_valid_score": 0.0524,
+ "best_valid_result": {
+  "recall@20": 0.1631,
+  "mrr@20": 0.0524,
+  "ndcg@20": 0.0725,
+  "hit@20": 0.1891,
+  "precision@20": 0.0103
+ },
+ "test_result": {
+  "recall@20": 0.1657,
+  "mrr@20": 0.0547,
+  "ndcg@20": 0.0756,
+  "hit@20": 0.1942,
+  "precision@20": 0.0107
+ },
+ "duration_s": 2811,
+ "date": "2026-09-14 06:31",
+ "device": "cuda:0"
+}

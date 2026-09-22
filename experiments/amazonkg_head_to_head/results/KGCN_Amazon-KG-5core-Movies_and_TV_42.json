@@ -1,0 +1,23 @@
+{
+ "algo": "KGCN",
+ "dataset": "Amazon-KG-5core-Movies_and_TV",
+ "seed": 42,
+ "best_valid_score": 0.041,
+ "best_valid_result": {
+  "recall@20": 0.132,
+  "mrr@20": 0.041,
+  "ndcg@20": 0.0576,
+  "hit@20": 0.1574,
+  "precision@20": 0.0087
+ },
+ "test_result": {
+  "recall@20": 0.1357,
+  "mrr@20": 0.0414,
+  "ndcg@20": 0.0588,
+  "hit@20": 0.1599,
+  "precision@20": 0.0086
+ },
+ "duration_s": 3947,
+ "date": "2026-09-14 08:49",
+ "device": "cuda:0"
+}

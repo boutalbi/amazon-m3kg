@@ -1,0 +1,23 @@
+{
+ "algo": "CKE",
+ "dataset": "M3KG-AKGsubset-Movies_and_TV",
+ "seed": 42,
+ "best_valid_score": 0.0513,
+ "best_valid_result": {
+  "recall@20": 0.1521,
+  "mrr@20": 0.0513,
+  "ndcg@20": 0.0692,
+  "hit@20": 0.1797,
+  "precision@20": 0.0099
+ },
+ "test_result": {
+  "recall@20": 0.1578,
+  "mrr@20": 0.0507,
+  "ndcg@20": 0.0695,
+  "hit@20": 0.1847,
+  "precision@20": 0.0101
+ },
+ "duration_s": 2518,
+ "date": "2026-09-13 20:09",
+ "device": "cuda:0"
+}

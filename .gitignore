@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+out/
+out_final/
+data/
+logs*/
+*.log
+saved*/
+log_tensorboard/
+*.pth
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz

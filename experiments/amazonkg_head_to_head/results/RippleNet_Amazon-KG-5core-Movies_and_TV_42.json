@@ -1,0 +1,23 @@
+{
+ "algo": "RippleNet",
+ "dataset": "Amazon-KG-5core-Movies_and_TV",
+ "seed": 42,
+ "best_valid_score": 0.035,
+ "best_valid_result": {
+  "recall@20": 0.1077,
+  "mrr@20": 0.035,
+  "ndcg@20": 0.0479,
+  "hit@20": 0.1289,
+  "precision@20": 0.0069
+ },
+ "test_result": {
+  "recall@20": 0.1074,
+  "mrr@20": 0.0337,
+  "ndcg@20": 0.0468,
+  "hit@20": 0.1292,
+  "precision@20": 0.0069
+ },
+ "duration_s": 2211,
+ "date": "2026-09-14 00:22",
+ "device": "cuda:0"
+}

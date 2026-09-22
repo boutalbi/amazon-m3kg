@@ -1,0 +1,23 @@
+{
+ "algo": "RippleNet",
+ "dataset": "M3KG-AKGsubset-Books",
+ "seed": 2024,
+ "best_valid_score": 0.0263,
+ "best_valid_result": {
+  "recall@20": 0.0946,
+  "mrr@20": 0.0263,
+  "ndcg@20": 0.0393,
+  "hit@20": 0.1065,
+  "precision@20": 0.0054
+ },
+ "test_result": {
+  "recall@20": 0.0935,
+  "mrr@20": 0.0252,
+  "ndcg@20": 0.0385,
+  "hit@20": 0.1047,
+  "precision@20": 0.0054
+ },
+ "duration_s": 5331,
+ "date": "2026-09-13 15:49",
+ "device": "cuda:0"
+}

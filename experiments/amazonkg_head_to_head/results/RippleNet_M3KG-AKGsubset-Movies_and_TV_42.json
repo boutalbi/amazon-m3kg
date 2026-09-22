@@ -1,0 +1,23 @@
+{
+ "algo": "RippleNet",
+ "dataset": "M3KG-AKGsubset-Movies_and_TV",
+ "seed": 42,
+ "best_valid_score": 0.0256,
+ "best_valid_result": {
+  "recall@20": 0.0783,
+  "mrr@20": 0.0256,
+  "ndcg@20": 0.0343,
+  "hit@20": 0.0956,
+  "precision@20": 0.005
+ },
+ "test_result": {
+  "recall@20": 0.0769,
+  "mrr@20": 0.024,
+  "ndcg@20": 0.0332,
+  "hit@20": 0.0944,
+  "precision@20": 0.005
+ },
+ "duration_s": 1351,
+ "date": "2026-09-13 17:56",
+ "device": "cuda:0"
+}

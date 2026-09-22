@@ -1,0 +1,37 @@
+# my_config.yaml
+data_path: 'datasets/'
+dataset: 'M3KG-AKGsubset-Books'
+
+# Model selection (choose one)
+model: 'CKE'  # or 'KGCN', 'KGIN', 'CKE', 'CFKG', etc.
+
+# Reproductibilité
+seed: 42
+reproducibility: True
+
+
+# Training parameters
+epochs: 300
+train_batch_size: 1024
+learner: 'adam'
+learning_rate: 0.001
+eval_step: 1
+stopping_step: 10
+
+# Evaluation
+eval_args:
+  group_by: user
+  order: RO
+  split: {'RS': [0.8, 0.1, 0.1]}  # Train/Valid/Test split
+  mode: full
+
+metrics: ["Recall","MRR","NDCG","Hit","Precision"]  # (list or str) Evaluation metrics.
+topk: [20]                      # (list or int or None) The value of k for topk evaluation metrics.
+valid_metric: MRR@20            # (str) The evaluation metric for early stopping.
+valid_metric_bigger: True       # (bool) Whether to take a bigger valid metric value as a better result.
+eval_batch_size: 4096           # (int) The evaluation batch size.
+metric_decimal_place: 4         # (int) The decimal place of metric scores.
+# KG-specific parameters (for knowledge-aware models)
+use_kg: True
+embedding_size: 64
+kg_embedding_size: 64

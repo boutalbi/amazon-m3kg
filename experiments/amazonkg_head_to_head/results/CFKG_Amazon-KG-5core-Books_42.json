@@ -1,0 +1,23 @@
+{
+ "algo": "CFKG",
+ "dataset": "Amazon-KG-5core-Books",
+ "seed": 42,
+ "best_valid_score": 0.0511,
+ "best_valid_result": {
+  "recall@20": 0.1608,
+  "mrr@20": 0.0511,
+  "ndcg@20": 0.0725,
+  "hit@20": 0.1804,
+  "precision@20": 0.0093
+ },
+ "test_result": {
+  "recall@20": 0.1591,
+  "mrr@20": 0.0507,
+  "ndcg@20": 0.0718,
+  "hit@20": 0.178,
+  "precision@20": 0.0093
+ },
+ "duration_s": 24635,
+ "date": "2026-09-14 00:26",
+ "device": "cpu"
+}

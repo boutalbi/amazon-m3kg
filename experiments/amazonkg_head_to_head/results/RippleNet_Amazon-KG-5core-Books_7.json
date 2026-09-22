@@ -1,0 +1,23 @@
+{
+ "algo": "RippleNet",
+ "dataset": "Amazon-KG-5core-Books",
+ "seed": 7,
+ "best_valid_score": 0.0268,
+ "best_valid_result": {
+  "recall@20": 0.0968,
+  "mrr@20": 0.0268,
+  "ndcg@20": 0.0405,
+  "hit@20": 0.109,
+  "precision@20": 0.0056
+ },
+ "test_result": {
+  "recall@20": 0.0977,
+  "mrr@20": 0.0263,
+  "ndcg@20": 0.0404,
+  "hit@20": 0.1095,
+  "precision@20": 0.0056
+ },
+ "duration_s": 4371,
+ "date": "2026-09-13 23:46",
+ "device": "cuda:0"
+}

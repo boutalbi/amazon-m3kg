@@ -1,0 +1,23 @@
+{
+ "algo": "CKE",
+ "dataset": "M3KG-AKGsubset-Books",
+ "seed": 2024,
+ "best_valid_score": 0.0574,
+ "best_valid_result": {
+  "recall@20": 0.1728,
+  "mrr@20": 0.0574,
+  "ndcg@20": 0.0799,
+  "hit@20": 0.1935,
+  "precision@20": 0.0102
+ },
+ "test_result": {
+  "recall@20": 0.1741,
+  "mrr@20": 0.0561,
+  "ndcg@20": 0.0792,
+  "hit@20": 0.1954,
+  "precision@20": 0.0102
+ },
+ "duration_s": 4320,
+ "date": "2026-09-12 15:08",
+ "device": "cuda:0"
+}

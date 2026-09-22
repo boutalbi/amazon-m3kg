@@ -1,0 +1,23 @@
+{
+ "algo": "KGCN",
+ "dataset": "M3KG-AKGsubset-Movies_and_TV",
+ "seed": 7,
+ "best_valid_score": 0.0417,
+ "best_valid_result": {
+  "recall@20": 0.1341,
+  "mrr@20": 0.0417,
+  "ndcg@20": 0.0583,
+  "hit@20": 0.1586,
+  "precision@20": 0.0085
+ },
+ "test_result": {
+  "recall@20": 0.1263,
+  "mrr@20": 0.0413,
+  "ndcg@20": 0.056,
+  "hit@20": 0.1505,
+  "precision@20": 0.0083
+ },
+ "duration_s": 2650,
+ "date": "2026-09-14 00:53",
+ "device": "cuda:0"
+}

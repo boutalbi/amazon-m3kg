@@ -1,0 +1,2497 @@
+# =============================================================================
+# categories.yaml: build configuration of the tri-modal Amazon datasets
+# =============================================================================
+# Principle
+#   relation:
+#     sources: [...]        flattened metadata paths, wildcards allowed
+#                           ('details/*Actor*'). ORDER matters.
+#     first_source_only:    true (default) = the first source filled in wins
+#                           -> this is what merges Actors/Starring,
+#                              Hardcover/Paperback/Print length, etc.
+#     pre_ops:              cleaning applied first of all (inherited from the defaults)
+#     ops:                  normalisation pipeline of the VALUES
+#
+# Available operations:
+#   fix_encoding strip_html collapse_ws lower upper title_case strip_chars
+#   strip_parenthetical truncate split_multi split_smart max_values drop_values
+#   drop_matching keep_matching drop_long drop_numeric map regex_map prefix_map
+#   person_name strip_roles keep_roles fold_partial_names language_base
+#   parse_pages_bin parse_runtime_bin parse_numeric_bin normalize_dimensions
+#   category_path canon_by_freq min_support
+#
+# strip_roles: removes the role and the record labels glued to a name.
+#     'Wayv (Artist) Format: Audio Cd'          -> 'Wayv'
+#     'Bach,j.s. (Artist, Composer)'            -> 'Bach,j.s.'
+#     'BMG Rights Management (US) LLC'          -> unchanged
+#     'Album-Oriented Rock (AOR)', 'Nikki Sixx:'-> unchanged
+#   Two CLOSED lists, never blind trimming: the recognised roles, and the
+#   record labels (format, rated, by, language, publisher, label...).
+#   A value that reduces to nothing ('Format: Audio Cd' alone) is dropped.
+#     roles / extra_roles / labels / keep_labels: true
+#   Not to be confused with keep_roles, which SELECTS a person by their role
+#   in a list ('X (Author), Y (Reader)' -> X).
+#
+# normalize_dimensions: a size is written in N ways ('48*48', '48 * 48',
+#   '48x48', '48cm*48cm', '48"x48"', '12-x-12-inch', '47x47 inch (pack of 1)').
+#   All are brought back to one spelling and one unit: '48 x 48 cm'.
+#     unit          target unit, default 'cm' (accepts mm, cm, m, in, ft, yd)
+#     assume_unit   unit assumed when the value carries none; by default the
+#                   target unit, so that '48 * 48' == '48cm*48cm'
+#     decimals      rounding, default 1
+#     drop_unparsed false (default): what is not a dimension passes untouched
+#                   (indispensable: hasSize also carries 'Small', 'One Size')
+#   Deliberately refuses what is ambiguous: '146 x 38 month', '2 x 3 pack',
+#   '1 x 2 x 3 x 4 cm'. Reads '7 5 inch' as 7.5 inch, a form present as such
+#   in the Amazon source next to '7.5 inches'.
+#
+# canon_by_freq: learns the variants on a first pass and keeps the most
+# frequent surface form per cluster (Red/red/RED -> Red). With tight: true,
+# spaces are ignored too (J.K. Rowling == JK Rowling == jkrowling).
+#
+# split_smart: produces SEVERAL triples from one compound value.
+#   strong: [...]  separators always split (';' '|' and often ',')
+#   weak:   [...]  ambiguous separators (' & ', ' and ', '/', sometimes ',')
+#   mode: always   splits the 'weak' ones unconditionally too. Reserved for
+#                  TAXONOMIES where '&' always means 'and':
+#                  'Action & Adventure' -> Action + Adventure.
+#   mode: evidence (default) only splits a 'weak' one if EACH fragment exists
+#                  alone elsewhere in the same relation, with at least
+#                  min_evidence occurrences, which protects proper nouns:
+#                  'Bath & Body Works' and 'Simon & Garfunkel' stay
+#                  whole because 'Bath' and 'Garfunkel' are not attested
+#                  values. Two identical fragments are never split
+#                  ('Johnson & Johnson'), and 'AT&T' is not a candidate for
+#                  want of spaces around the '&'.
+#   keep_whole_ref: common.keep_whole  list of explicit exceptions.
+# The mode is chosen PER RELATION: knowledge of the attribute content
+# settles it, never a global syntactic rule.
+# =============================================================================
+
+version: 1
+
+rules_files:
+  common: rules/common_rules.json
+  movies: rules/movies_rules.json
+  books:  rules/books_rules.json
+  sports: rules/sports_rules.json
+  fashion: rules/fashion_rules.json
+  music: rules/music_rules.json
+
+# -----------------------------------------------------------------------------
+# Defaults common to every category
+# -----------------------------------------------------------------------------
+defaults:
+  id_field: parent_asin
+  drop_products_without_subject: true
+  min_relations: 2                      # a product with <2 triples is discarded
+  person_rules: [common]
+
+  pre_ops: [fix_encoding, strip_html, collapse_ws, strip_chars]
+
+  subject:                              # subject of the triples = product name
+    fields: [title]
+    max_len: 200
+    # The name alone does not identify a product: homonyms are frequent, and
+    # without a suffix their triples merge irreversibly.
+    #   always -> always 'Title ##B00XXXX'  (chosen: one convention, no
+    #             residual ambiguity, no trap for the user)
+    #   true   -> suffix only in case of homonymy
+    #   false  -> never
+    disambiguate: always
+
+  text:                                 # modalite TEXTE
+    fields: [title, description]
+    separator: " . "
+    max_chars: 4000
+    min_chars: 3
+
+  image:                                # modalite IMAGE
+    # Amazon uses TWO schemas: the classic catalogue keys (hi_res/large/
+    # thumb) and the responsive widths of the Prime Video records, served
+    # from /images/S/pv-target-images/. Many records carry only the second
+    # set. Order = from the best resolution to the worst.
+    prefer: [hi_res, 1920w, 1440w, 1080w, 720w, large, 480w, 360w, thumb]
+    main_only: true                     # false -> every image of the product
+
+  # Relations present in EVERY category
+  global_relations:
+    hasMainCategory:
+      sources: ["main_category"]
+      ops:
+        - {op: drop_values, rules_ref: common.invalid_values}
+        - {op: canon_by_freq}
+
+    hasCategory:
+      sources: ["categories"]
+      ops:
+        - {op: drop_values, rules_ref: common.invalid_values}
+        - {op: drop_matching, rules_ref: common.invalid_patterns}
+        - {op: category_path, max_depth: 3, skip_root: true}
+        # Taxonomy: in an Amazon node the '&' always means 'and'.
+        # 'Blankets & Swaddling' -> two triples, 'Action & Adventure' -> two.
+        - {op: split_smart, mode: always, strong: [";", "|"],
+           weak: [" & ", " and ", ","], min_len: 3}
+        - {op: canon_by_freq}
+        # Singular and plural of the same taxonomic node coexist
+        # ('Thriller' / 'Thrillers'). The merge only happens if BOTH forms
+        # are attested; the semantically distinct pairs (Glass/Glasses,
+        # Short/Shorts) are protected. After canon_by_freq, before
+        # max_values.
+        - {op: fold_plural}
+        - {op: max_values, n: 5}
+
+    hasStore:
+      sources: ["store"]
+      ops:
+        - {op: drop_values, rules_ref: common.invalid_values}
+        - {op: drop_matching, rules_ref: common.invalid_patterns}
+        - {op: drop_long, max_len: 60}
+        - {op: canon_by_freq, tight: true}
+
+# =============================================================================
+# Categories
+# =============================================================================
+categories:
+
+  # ---------------------------------------------------------------------------
+  # GENERIC BASE, inherited by the "physical product" categories.
+  # The wildcards absorb the naming variants from one category to the next.
+  # To be refined with `discover` for each category (see README).
+  # ---------------------------------------------------------------------------
+  _generic:
+    relations:
+      hasBrand:
+        sources: ["details/Brand", "details/Brand Name", "details/Manufacturer", "store"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          # 'store' brings record mentions into the brands:
+          # 'Various Artists (Artist) Format: Audio CD' was a brand.
+          - strip_roles
+          - {op: drop_matching, rules_ref: common.invalid_patterns}
+          - {op: drop_long, max_len: 50}
+          - {op: canon_by_freq, tight: true}
+          - {op: fold_by_prefix, min_count: 10}
+          - {op: min_support, n: 3}
+
+      hasColor:
+        sources: ["details/Color", "details/Colour", "details/Color Name", "details/*Color*"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/", " & "]}
+          - lower
+          - {op: map, rules_ref: common.color_map}
+          - {op: prefix_map, rules_ref: common.color_prefix_groups}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          # Sellers misuse 'Color' as a variant label: '2pcs', 'Set 1', 'P4',
+          # '30', '003'. Pure numbers and rare forms are discarded; a real
+          # colour is shared by several products.
+          - drop_numeric
+          - {op: drop_matching, patterns: ["^(set|style|color|colour|type|model|pcs?|pack|no)[\\s._-]*\\d+$",
+                                           "^\\d+\\s*(pcs?|pack|set|count|ct)$",
+                                           "^[a-z]\\s*\\d+$"]}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasSize:
+        sources: ["details/Size", "details/Size Name", "details/Item Size"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - lower
+          - {op: map, rules_ref: common.size_map}
+          # The same size is written '48*48', '48 * 48', '48x48', '48cm*48cm',
+          # '48"x48"', '12-x-12-inch', '47x47 inch (pack of 1)'. Everything is
+          # brought back to one spelling and one unit: '48 x 48 cm'.
+          # Non-dimensional values ('Small', 'One Size') pass untouched.
+          - {op: normalize_dimensions, unit: cm, decimals: 1}
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}
+
+      hasMaterial:
+        sources: ["details/Material", "details/Material Type", "details/Fabric Type",
+                  "details/Outer Material", "details/*Material*"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/", " & ", "+"]}
+          - {op: prefix_map, rules_ref: common.material_prefix_groups}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: max_values, n: 3}
+
+      # TARGET AUDIENCE. Renamed from hasDepartment: 'department' is the name
+      # of the Amazon aisle, not of the property. Three changes.
+      #
+      # 1. The TITLE becomes a source: the record field is rarely filled in
+      #    on fashion items, while the title carries the audience
+      #    ('Women's Cotton Maxi Dress').
+      # 2. CLOSED and DECOMPOSED vocabulary. The old table produced 19
+      #    labels including 'Baby Girls', 'Unisex Adult' and 'Teen Boys',
+      #    which joined neither 'Baby' nor 'Girls': that many more entities
+      #    and not one more link. Compounds now resolve by themselves --
+      #    'Baby Girls' contains 'baby' and 'girls' and gives two triples.
+      #    Twelve labels are left for the whole catalogue.
+      # 3. What is not in the lexicon is discarded: the relation carried
+      #    'Apparel' and 'Unisex-adult (luggage Only)', which are not
+      #    audiences.
+      #
+      # The lexicon lives in common_rules because the audience crosses every
+      # category: normalised the same way everywhere, it links a toy to a
+      # garment.
+      hasTargetAudience:
+        sources: ["details/Department", "details/Target Audience", "details/Gender",
+                  "details/Target gender", "details/Suggested Users", "title"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: common.population_map, max_terms: 2}
+          - {op: max_values, n: 2}
+
+      hasStyle:
+        sources: ["details/Style", "details/Style Name", "details/Theme", "details/Pattern",
+                  "details/Occasion", "details/Shape"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasItemForm:
+        sources: ["details/Item Form", "details/Product Form", "details/Format",
+                  "details/Package Type", "details/Unit Count Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          # 'Cream,Gel' was kept whole: half of the 630 All_Beauty forms were
+          # combinations. Evidence mode: only splits if each form exists
+          # alone elsewhere.
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+
+      hasSpecialFeature:
+        sources: ["details/Special Feature", "details/Special Features",
+                  "details/Product Benefits", "details/Recommended Uses For Product",
+                  "details/Specific Uses For Product"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+      # The age is written in every possible way: '0 months and up', '3 years
+      # and up', '18 months - 8 years', 'Adult', 'Kid', 'Babies', and a whole
+      # field ('Manufacturer Minimum Age (MONTHS)') is already labelled in
+      # months. The synonym table only covered the textual labels and dropped
+      # 'details/Manufacturer recommended age', which is widely filled in.
+      # The MINIMUM age in months is read instead, since it carries
+      # the constraint of the product (the maximum age is often commercial),
+      # then binned with common.age_bins.
+      hasAgeRange:
+        sources: ["details/Age Range (Description)", "details/Age Range Description",
+                  "details/Target Age Range", "details/Manufacturer recommended age",
+                  "details/Our Recommended age", "details/Age Range",
+                  "details/Manufacturer Minimum Age (MONTHS)",
+                  "details/Minimum Age Recomendation", "details/Reading age"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/"],
+             min_evidence: 5, min_len: 3}
+          - {op: parse_age_bin, default_unit: years, bins_ref: common.age_bins}
+          - {op: max_values, n: 2}
+
+      # ---------------------------------------------------------------------
+      # Physical quantities: convert, then bin.
+      #
+      # These attributes are among the best filled in of the catalogue and
+      # were nonetheless unusable: `discover` rejects 'Item Package
+      # Dimensions L x W x H' as a quasi-identifier. Two causes: every seller
+      # picks their unit ('1 Pounds', '16 Ounces', '453.6 Grams' for the same
+      # weight), and the converted value stays nearly continuous. Conversion
+      # makes the values comparable, binning makes them shareable.
+      #
+      # A unit unknown to the family is never ignored: '16 Teeth' and
+      # '1.5 Pounds' in a capacity field are rejected, not read as 16 and
+      # 1.5 ml.
+      # ---------------------------------------------------------------------
+
+      hasWeightCategory:
+        sources: ["details/Item Weight", "details/Weight", "details/Package Weight",
+                  "details/Net Content Weight"]
+        first_source_only: true
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: convert_measure, family: mass, to: g, bins_ref: common.weight_bins}
+          - {op: max_values, n: 1}
+
+      # 'Product Dimensions' reads '16 x 1 x 1 inches; 1.76 Ounces': Amazon
+      # aggregates the dimension and the weight there. The parser isolates
+      # the dimensional part. Three sides are required: a two-sided size is a
+      # surface, and inventing a volume for it would be a silent mistake.
+      hasVolumeCategory:
+        sources: ["details/Product Dimensions", "details/Item Dimensions LxWxH",
+                  "details/Item Dimensions  LxWxH", "details/Dimensions"]
+        first_source_only: true
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: dimension_volume, unit: cm, bins_ref: common.volume_bins}
+          - {op: max_values, n: 1}
+
+      hasCapacityCategory:
+        sources: ["details/Capacity", "details/Item Volume", "details/Liquid Volume",
+                  "details/Volume", "details/Capacity Total", "details/Tank Volume",
+                  "details/Net Content Volume", "details/Bowl Capacity"]
+        first_source_only: true
+        ops:
+          - {op: convert_measure, family: volume, to: ml, bins_ref: common.capacity_bins}
+          - {op: max_values, n: 1}
+
+      hasLoadCategory:
+        sources: ["details/Maximum Weight Recommendation",
+                  "details/Maximum weight recommendation",
+                  "details/Maximum Weight Capacity", "details/Load Capacity",
+                  "details/Weight Limit"]
+        first_source_only: true
+        ops:
+          - {op: convert_measure, family: mass, to: g, bins_ref: common.load_bins}
+          - {op: max_values, n: 1}
+
+      hasBladeLengthCategory:
+        sources: ["details/Blade Length"]
+        ops:
+          - {op: convert_measure, family: length, to: cm, bins_ref: common.blade_bins}
+          - {op: max_values, n: 1}
+
+      # ---------------------------------------------------------------------
+      # Boolean flags.
+      #
+      # Only the POSITIVE case is emitted. 'X hasBatteryRequirement No' would
+      # hold for nearly the whole catalogue and would bring nothing closer to
+      # anything. The emitted value names the fact rather than being 'Yes': a
+      # 'Yes' node shared between several different flags would be a false
+      # edge. What is neither yes nor no is discarded, not guessed.
+      # ---------------------------------------------------------------------
+
+      hasBatteryRequirement:
+        sources: ["details/Batteries Required?", "details/Batteries required",
+                  "details/Batteries Required"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Batteries Required"}
+
+      hasBatteryInclusion:
+        sources: ["details/Batteries Included?", "details/Are Batteries Included",
+                  "details/Batteries Included", "details/Rechargeable Battery Included"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Batteries Included"}
+
+      hasAvailabilityStatus:
+        sources: ["details/Is Discontinued By Manufacturer",
+                  "details/Is Discontinued by Manufacturer"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Discontinued"}
+
+      # ---------------------------------------------------------------------
+      # Attributes revealed by `discover` on the real files, common to
+      # several categories (Baby, Electronics, Automotive, Arts & Crafts).
+      # Value tables from the normalisation rules of the project.
+      # ---------------------------------------------------------------------
+
+      # 'Number of Items', 'Number Of Items', 'Number of Pieces', 'Unit
+      # Count', 'Item Package Quantity' all mean the pack size -> one
+      # relation, binned value.
+      hasPackSize:
+        sources: ["details/Number of Items", "details/Number Of Items",
+                  "details/Number of Pieces", "details/Unit Count",
+                  "details/Item Package Quantity", "details/Number of Sets"]
+        first_source_only: true
+        ops:
+          - {op: parse_numeric_bin, rules_ref: common.pack_bins}
+
+      hasCountryOfOrigin:
+        sources: ["details/Country of Origin", "details/Country/Region of Origin",
+                  "details/Country/Region of origin", "details/Made in"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - lower
+          - {op: map, rules_ref: common.country_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasCareInstruction:
+        sources: ["details/Care Instructions", "details/Care instructions",
+                  "details/Product Care Instructions", "details/Cleaning Method"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 2}
+
+      hasClosureType:
+        sources: ["details/Closure Type", "details/Closure", "details/Fastening Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - lower
+          - {op: map, rules_ref: common.closure_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasMountingType:
+        sources: ["details/Mounting Type", "details/Installation Type",
+                  "details/Installation Method"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - lower
+          - {op: map, rules_ref: common.mounting_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasPowerSource:
+        sources: ["details/Power Source", "details/Power Supply",
+                  "details/Battery Type", "details/Energy Source"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 2}
+          - lower
+          - {op: map, rules_ref: common.power_source_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasFinish:
+        sources: ["details/Finish Type", "details/Finish", "details/Exterior Finish",
+                  "details/Exterior", "details/Surface Finish"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - lower
+          - {op: map, rules_ref: common.finish_map}
+          - title_case
+          - {op: drop_long, max_len: 25}
+          # tight: 'Powdercoated' == 'Powder Coated'
+          - {op: canon_by_freq, tight: true}
+          # prefix: 'Painted Finish' -> 'Painted', 'Powder Coat' -> 'Powder Coated'
+          - {op: fold_by_prefix, min_count: 20}
+          - {op: min_support, n: 5}
+
+      hasReusability:
+        sources: ["details/Reusability", "details/Reusable"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - lower
+          - {op: map, rules_ref: common.reusability_map}
+          - title_case
+          - {op: canon_by_freq}
+
+      hasIncludedComponent:
+        sources: ["details/Included Components", "details/Included Components?",
+                  "details/What's in the box"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, mode: always, strong: [";", "|", ","],
+             weak: [" & ", " and "], min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 20}
+          - {op: max_values, n: 4}
+
+      # Collaborative signals useful in recommendation (can be disabled:
+      # replace the block by `hasPriceRange: null` in the category).
+      hasPriceRange:
+        sources: ["price"]
+        ops:
+          - {op: parse_numeric_bin, rules_ref: common.price_bins}
+
+      # 'store' is already captured by hasBrand for physical products: the
+      # global hasStore relation is disabled to avoid duplicate triples.
+      hasStore: null
+
+      hasRatingLevel:
+        sources: ["average_rating"]
+        ops:
+          - {op: parse_numeric_bin, rules_ref: common.rating_bins}
+
+      hasPopularity:
+        sources: ["rating_number"]
+        ops:
+          - {op: parse_numeric_bin, rules_ref: common.popularity_bins}
+
+  # ===========================================================================
+  # BOOKS
+  # ===========================================================================
+  Books:
+    person_rules: [common, books]
+    min_relations: 2
+    subject:
+      max_len: 180
+    relations:
+
+      # details/Hardcover, details/Paperback and details/Print length ALL
+      # mean the page count -> one relation, binned value.
+      # Override of the global hasCategory relation: 'Genre Fiction' is the
+      # Amazon aisle label for genre fiction, hence the same thing as
+      # 'Fiction'. The distinct sub-genres (Science Fiction, Historical
+      # Fiction, Women's Fiction) are left untouched.
+      hasCategory:
+        sources: ["categories"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_matching, rules_ref: common.invalid_patterns}
+          - {op: category_path, max_depth: 3, skip_root: true}
+          - {op: split_smart, mode: always, strong: [";", "|"],
+             weak: [" & ", " and ", ","], min_len: 3}
+          - {op: map, rules_ref: books.category_map}
+          - {op: canon_by_freq}
+          - {op: fold_plural}
+          - {op: max_values, n: 5}
+
+      # The raw page count (hasPageCount) is not kept: nearly continuous and
+      # worthless for recommendation. Only the band is kept.
+      hasPageRange:
+        sources: ["details/Print length", "details/Print Length", "details/Hardcover",
+                  "details/Paperback", "details/Mass Market Paperback",
+                  "details/Board book", "details/Library Binding", "details/Spiral-bound"]
+        first_source_only: true
+        ops:
+          - {op: parse_pages_bin, rules_ref: books.page_bins}
+
+      # The format follows from the KEY filled in: it is recovered through a
+      # dedicated relation fed by the same sources (value = name of the key).
+      hasPublisher:
+        sources: ["details/Publisher", "details/publisher"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: strip_parenthetical}          # "Penguin (June 3, 2003)" -> "Penguin"
+          - {op: regex_map, whole: false, rules: [["\\s*;.*$", ""], ["\\s*,\\s*(reprint|revised|illustrated|new).*$", ""]]}
+          - {op: prefix_map, rules_ref: books.publisher_groups}
+          - {op: drop_long, max_len: 60}
+          - {op: canon_by_freq, tight: true}
+          - {op: fold_by_prefix, min_count: 5}
+
+      hasLanguage:
+        sources: ["details/Language", "details/language"]
+        ops:
+          - {op: drop_values, rules_ref: books.language_invalid}
+          - {op: language_base}
+          - {op: map, rules_ref: books.language_mappings}
+          - {op: map, rules_ref: common.generic_language_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}
+
+      # The 'store' field of Books is not a shop but the statement of
+      # responsibility: 'Nora Roberts (Author)'. Used as is it produces
+      # nearly unique values, so it is recycled as an author source and
+      # hasStore is disabled.
+      hasStore: null
+
+      hasAuthor:
+        sources: ["author/name", "details/Author", "details/Contributor",
+                  "details/Editor", "store"]
+        first_source_only: false
+        ops:
+          - {op: keep_roles, roles: ["author", "auteur"]}
+          - strip_roles
+          # ';' and '|' always separate; ',' and '&' only if each name exists
+          # alone elsewhere ('Rowling, J.K.' must not become two authors).
+          - {op: split_smart, strong: [";", "|"], weak: [",", " and ", " & "],
+             min_evidence: 3, min_len: 4, keep_whole_ref: common.keep_whole}
+          - {op: drop_matching, rules_ref: books.author_invalid_patterns}
+          - {op: person_name, min_tokens: 1}
+          - {op: canon_by_freq, tight: true}
+          - {op: fold_partial_names, min_count: 3}
+          - {op: max_values, n: 3}
+
+      # --- attributes revealed by `discover` on the real file ---------------
+      # 'subtitle' carries TWO pieces of information mixed:
+      #   "Paperback – January 1, 1997"  -> format
+      #   "1st Edition" / "Illustrated Edition" -> edition
+      # hence two relations drawn from the same source.
+      hasFormat:
+        sources: ["subtitle", "details/Format", "details/Binding"]
+        ops:
+          - {op: regex_map, whole: false, rules: [["\\s*[\\u2010-\\u2015-]\\s*.*$", ""]]}
+          - title_case
+          - {op: keep_matching, patterns: ["^(Hardcover|Paperback|Kindle Edition|Mass Market Paperback|Board Book|Library Binding|Spiral-Bound|Audio Cd|Audible Audiobook|Loose Leaf|Comic|Calendar|Pamphlet|Digital)$"]}
+          - {op: canon_by_freq}
+
+      hasEdition:
+        sources: ["subtitle", "details/Edition"]
+        ops:
+          - {op: keep_matching, patterns: ["\\bedition\\b"]}
+          - {op: regex_map, whole: false, rules: [["\\s*[\\u2010-\\u2015-]\\s*.*$", ""]]}
+          - title_case
+          - {op: drop_values, values: ["Kindle Edition", "Unknown Binding"]}
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 20}
+
+      hasReadingAge:
+        sources: ["details/Reading age", "details/Reading Age"]
+        ops:
+          - {op: drop_matching, patterns: ["^from customers$", "^\\s*$"]}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 20}
+
+      hasGradeLevel:
+        sources: ["details/Grade level", "details/Grade Level"]
+        ops:
+          - {op: drop_matching, patterns: ["^from customers$"]}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 20}
+
+      # 'March 24, 2011' -> '2011': without extraction, hundreds of nearly
+      # unique values.
+      hasPublicationYear:
+        sources: ["details/Publication date", "details/Publication Date"]
+        ops:
+          - {op: regex_map, whole: false, rules: [["^.*?\\b((?:1[5-9]|20)\\d{2})\\b.*$", "\\1"]]}
+          - {op: keep_matching, patterns: ["^(1[5-9]|20)\\d{2}$"]}
+
+  # ===========================================================================
+  # MOVIES_AND_TV: uses the normalisation rules in full
+  # ===========================================================================
+  Movies_and_TV:
+    person_rules: [common, movies]
+    min_relations: 2
+    relations:
+
+      # details/Actors and details/Starring mean the SAME relation.
+      hasActor:
+        # No '*Actor*' wildcard here: it captured 'details/Form Factor'.
+        sources: ["details/Actors", "details/Starring", "details/Actor",
+                  "details/Cast", "details/Featured Actors"]
+        first_source_only: true
+        ops:
+          - strip_roles
+          # ',' ';' '|' always separate a cast; the '&' only if both names
+          # exist alone elsewhere in the corpus.
+          - {op: split_smart, strong: [",", ";", "|"], weak: [" & ", " and "],
+             min_evidence: 3, min_len: 4, keep_whole_ref: common.keep_whole}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - person_name
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 5}
+
+      hasDirector:
+        sources: ["details/Director", "details/Directors", "details/Directed by"]
+        ops:
+          - strip_roles
+          - {op: split_multi, separators: [",", ";", "|"]}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - person_name
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 2}
+
+      hasWriter:
+        sources: ["details/Writers", "details/Writer", "details/Screenwriter"]
+        ops:
+          - {op: split_multi, separators: [",", ";", "|"]}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - person_name
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 3}
+
+      hasProducer:
+        sources: ["details/Producers", "details/Producer"]
+        ops:
+          - strip_roles
+          - {op: split_multi, separators: [",", ";", "|"]}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - person_name
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 3}
+
+      # 'details/Contributor' lists EVERYONE: actors, director, producers.
+      # Without subsumption, 'Robert de Niro' was emitted twice for the same
+      # film, under hasActor then under hasContributor. The relation keeps
+      # the people that no specific relation names (executive producer,
+      # editor).
+      hasContributor:
+        subsumed_by: [hasActor, hasDirector, hasProducer, hasWriter, hasCreator]
+        sources: ["details/Contributor"]
+        ops:
+          - {op: split_multi, separators: [",", ";", "|"]}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - person_name
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 5}
+
+      hasStudio:
+        sources: ["details/Studio", "details/Distributor", "details/Label"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_values, rules_ref: movies.studio_invalid}
+          - {op: map, rules_ref: movies.studio_mappings}
+          - {op: prefix_map, rules_ref: movies.studio_groups}
+          - {op: drop_matching, rules_ref: movies.person_invalid_patterns}
+          - {op: drop_long, max_len: 60}
+          - {op: canon_by_freq, tight: true}
+          - {op: fold_by_prefix, min_count: 5}
+          - {op: min_support, n: 5}
+
+      hasGenre:
+        sources: ["details/Genre", "details/Genres"]
+        ops:
+          # Genre = taxonomy: 'Action & Adventure' gives two triples.
+          - {op: split_smart, mode: always, strong: [",", ";", "|"],
+             weak: [" & ", " and ", "/"], min_len: 3}
+          - {op: drop_values, rules_ref: movies.genre_invalid}
+          - {op: map, rules_ref: movies.genre_mappings, split_result: ","}
+          - title_case
+          - {op: keep_matching, patterns: ["^(Action|Adventure|Animation|Anime|Bollywood|Classic|Comedy|Crime|Documentary|Drama|Faith|Family|Fantasy|Foreign|Historical|Horror|Independent|Kids|LGBT|Music|Musical|Mystery|Romance|Sci-Fi|Special Interests|Sports|Suspense|Television|Thriller|War|Western)$"]}
+          - {op: max_values, n: 4}
+
+      # The runtime is BINNED, the raw value is not kept: nearly continuous,
+      # of no interest in recommendation. Same treatment as hasPageCount.
+      # Short/feature threshold at 40 min: definition of the Academy of
+      # Motion Picture Arts and Sciences, taken up by the AFI, the BFI and
+      # the Screen Actors Guild. The 240+ class is kept apart: it is mostly
+      # box sets and seasons, not long films.
+      hasRuntimeCategory:
+        sources: ["details/Runtime", "details/Run time", "details/Duration"]
+        ops:
+          - {op: parse_runtime_bin, rules_ref: movies.runtime_bins}
+
+      hasLanguage:
+        sources: ["details/Language", "details/Subtitles"]
+        first_source_only: true
+        ops:
+          - {op: split_multi, separators: [",", ";"]}
+          - {op: drop_values, rules_ref: movies.language_invalid}
+          - {op: language_base, audio_relation: hasAudioFormat}
+          - {op: map, rules_ref: movies.language_mappings}
+          - {op: map, rules_ref: common.generic_language_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 3}
+
+  # ===========================================================================
+  # CATEGORIES
+  # Each inherits from the _generic base and adds/removes what is specific.
+  # Check / refine with:  discover -i meta_<CAT>.jsonl.gz
+  # ===========================================================================
+
+  All_Beauty:
+    inherit: _generic
+    relations:
+      hasSkinType:
+        sources: ["details/Skin Type", "details/Skin Tone", "details/Hair Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 3}
+      hasScent:
+        sources: ["details/Scent", "details/Flavor", "details/Fragrance"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 3}
+      hasSize: null                      # tailles beaute = volumes, peu discriminant
+
+  Amazon_Fashion:
+    inherit: _generic
+    relations:
+      # ---------------------------------------------------------------------
+      # READ THE TITLE. On Amazon_Fashion the product record is nearly empty
+      # (few items carry a colour, a material or a size, none a type), which
+      # made this the sparsest category of the corpus. The title carries the
+      # information: 'Women's Cotton Maxi Dress Black XL' contains on its own
+      # the audience, the material, the type, the sub-type, the colour and
+      # the size.
+      #
+      # Extraction is done with a CLOSED LEXICON, not with entity
+      # recognition: a term absent from the lexicon produces nothing. The
+      # values of these relations are therefore exactly those of the
+      # published lexicon, hence countable and verifiable. The lexicon also
+      # normalises: 'tee', 'tshirt' and 't-shirt' point to the same label.
+      #
+      # ---------------------------------------------------------------------
+
+      # 'dominant' rather than the rightmost term: sales titles pile up
+      # keywords and the real type comes back several times.
+      # 'Workout Shorts Yoga Sport Fitness Short Pant' is a short, which the
+      # rightmost head classified as trousers because 'Pant' closed the march.
+      hasProductType:
+        sources: ["title"]
+        ops:
+          - {op: match_lexicon, rules_ref: fashion.product_type_map,
+             mode: dominant, max_terms: 1}
+
+      # The sub-type is looked up in the SOLE sub-lexicon of its type, failing
+      # which 'Boot Cut Jeans' would be a boot and 'Mini Backpack' a mini
+      # dress. The operation also writes the taxonomy edge
+      # <type> hasSubtype <sub-type>, whose subject is the type and not the
+      # product: it is written once, at the end of the .kg.
+      hasProductSubtype:
+        sources: ["title"]
+        ops:
+          - {op: match_subtype, type_rules_ref: fashion.product_type_map,
+             rules_ref: fashion.product_subtype_map,
+             taxo_relation: hasSubtype, max_terms: 2}
+
+      # Record AND title: the record is safer when it is filled in, the title
+      # takes over everywhere else.
+      hasColor:
+        sources: ["details/Color", "details/Colour", "details/Color Name",
+                  "details/*Color*", "title"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: fashion.color_map, max_terms: 2}
+          - {op: max_values, n: 2}
+
+      hasMaterial:
+        sources: ["details/Material", "details/Material Type",
+                  "details/Fabric Type", "details/Outer Material", "title"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: fashion.material_map, max_terms: 2}
+          - {op: max_values, n: 2}
+      # A title often carries several sizes ('S M L XL'): each gives a
+      # triple. Numeric sizes are brought back to a single unit, failing
+      # which '18 inch' and '45.7 cm' make two entities for one necklace. A
+      # number without a unit is refused: in a title it is just as often a
+      # pack, a shoe size or a model number.
+
+      hasSize:
+        sources: ["details/Size", "details/Size Name", "details/Item Size",
+                  "title"]
+        first_source_only: false
+        ops:
+          - {op: extract_sizes, unit: cm, max_terms: 4}
+          - {op: max_values, n: 4}
+
+      hasFitType:
+        sources: ["details/Fit Type", "details/Fit", "details/Sleeve Type",
+                  "details/Closure Type", "details/Neck Style"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}
+
+  Arts_Crafts_and_Sewing:
+    inherit: _generic
+    relations:
+      hasCraftType:
+        sources: ["details/Craft Type", "details/Product Type", "details/Item Type Name",
+                  "details/Theme"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 3}
+
+  Automotive:
+    inherit: _generic
+    relations:
+      hasVehicleFitment:
+        sources: ["details/Vehicle Service Type", "details/Compatible Vehicles",
+                  "details/Vehicle Type", "details/Position"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: max_values, n: 3}
+      # 'Finish Type' and 'Exterior'/'Exterior Finish' are the same
+      # information: hasFinish of the generic base covers them all.
+      hasFinishType: null
+
+      # --- attributes revealed by `discover` on meta_Automotive.jsonl.gz -----
+      # NB: 'OEM Part Number' is deliberately set aside: it is an identifier,
+      # worthless in recommendation.
+      # 'Domestic Shipping' / 'International Shipping' are delivery text.
+      hasFitType:
+        sources: ["details/Fit Type", "details/Fit"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_matching, patterns: ["class=", "<[a-z]"]}   # debris HTML (doc V5)
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          # 'map' compare deja en insensible casse/accents/ponctuation
+          - {op: map, table: {"universal fit": "Universal", "universal": "Universal",
+                              "regular": "Regular", "vehicle specific fit": "Vehicle Specific",
+                              "vehicle specific": "Vehicle Specific",
+                              "custom fit": "Custom", "direct fit": "Direct Fit"}}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasPartPosition:
+        sources: ["details/Auto Part Position", "details/Position",
+                  "details/Placement on Vehicle"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      hasLightSource:
+        sources: ["details/Light Source Type", "details/Bulb Type",
+                  "details/Light Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          # 'Halogen, LED' and 'LED, Halogen' are two bulbs, not one value
+          - {op: split_smart, strong: [";", "|", ","], weak: ["/", " & ", " and "],
+             mode: always, min_len: 3}
+          - {op: map, table: {"l.e.d.": "LED", "led": "LED", "led light": "LED",
+                              "halogen": "Halogen", "xenon": "Xenon", "hid": "HID",
+                              "incandescent": "Incandescent", "laser": "Laser",
+                              "fluorescent": "Fluorescent", "cfl": "Fluorescent"}}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasSize: null
+
+  Baby_Products:
+    inherit: _generic
+    relations:
+      # hasAgeRange, hasPackSize, hasCountryOfOrigin, hasCareInstruction,
+      # hasClosureType, hasMountingType, hasReusability, hasIncludedComponent
+      # are now covered by the generic base.
+      # Left for step 2: Maximum/Minimum weight recommendation (Pounds),
+      # Capacity (ml); for step 3: Batteries required, Dishwasher safe,
+      # Is portable, Assembly Required, BPA Free.
+      hasSafetyFeature:
+        sources: ["details/Special Feature", "details/Product Benefits", "details/Safety"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 4}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+      # --- attributes revealed by `discover` on meta_Baby_Products.jsonl.gz ---
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+      # 'Blanket Form' (Swaddle / Receiving Blanket / Throw) is an item shape
+      # specific to childcare.
+      hasItemForm:
+        sources: ["details/Item Form", "details/Blanket Form", "details/Product Form",
+                  "details/Format", "details/Package Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasSpecialFeature:
+        sources: ["details/Special Feature", "details/Special Features",
+                  "details/Additional product features", "details/Product Benefits",
+                  "details/Specific Uses For Product", "details/Specific Uses"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 3}
+
+  Beauty_and_Personal_Care:
+    inherit: All_Beauty
+
+  # Books: defined above.
+
+  CDs_and_Vinyl:
+    inherit: _generic
+    person_rules: [common, movies]
+    relations:
+      # ---------------------------------------------------------------------
+      # READ THE TITLE (music). Same observation as for fashion, another
+      # aisle: hasGenre barely covered the Digital_Music products and no
+      # attribute stated the medium. The title carries all three: 'Stan
+      # Kenton: The Complete Capitol Recordings [Vinyl]' names the artist,
+      # the nature of the record and its medium.
+      # TROIS RELATIONS PLUTOT QU'UNE. La demande groupait 'CD, LIVE, Vinyl'
+      # THREE RELATIONS RATHER THAN ONE. A CD recorded live is a medium and
+      # a kind of recording at once; joining them under one relation name
+      # would repeat the flaw of a generic 'subject' relation that carries
+      # the author, the genre, the place and the year alike.
+
+      hasGenre:
+        sources: ["details/Genre", "details/Style", "title"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: music.genre_title_map, max_terms: 3}
+          - {op: max_values, n: 3}
+
+      hasMediaFormat:
+        sources: ["details/Format", "details/Media Format", "title"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: music.media_format_map, max_terms: 2}
+          - {op: max_values, n: 2}
+
+      hasReleaseType:
+        sources: ["title", "details/Format"]
+        first_source_only: false
+        ops:
+          - {op: match_lexicon, rules_ref: music.release_type_map, max_terms: 2}
+          - {op: max_values, n: 2}
+
+      # Marginal on Digital_Music but useful on CDs_and_Vinyl. The two usual
+      # spellings, '70s and 70s, converge on a single label.
+      hasEra:
+        sources: ["title"]
+        ops:
+          - {op: match_lexicon, rules_ref: music.era_map, max_terms: 1}
+
+      # ARTIST FALLBACK. Many products have an artist source that yields no
+      # triple, for want of a usable name in the record. This relation looks
+      # in the title for the artist names LEARNED
+      # on the rest of the corpus (the vocabulary is open, so no hand-written
+      # lexicon would do) and is published, under the name hasArtist, only
+      # for the products where hasArtist produced nothing. Where the record
+      # has spoken, it stays silent.
+      hasArtistFromTitle:
+        fallback_for: hasArtist
+        sources: ["title"]
+        ops:
+          - {op: match_learned, learn_from: hasArtist, min_count: 3,
+             max_len: 40, max_terms: 2}
+      hasArtist:
+        sources: ["details/Artist", "details/Performer", "details/Contributor", "store"]
+        first_source_only: true
+        ops:
+          # The 'store' field glues the role and the product record to the
+          # name: 'Wayv (Artist) Format: Audio Cd' -> 'Wayv'.
+          - strip_roles
+          # 'Simon & Garfunkel', 'Earth, Wind & Fire' are band names: the '&'
+          # is only split if each half exists alone as an artist.
+          - {op: split_smart, strong: [";", "|"], weak: [",", " & ", " and "],
+             min_evidence: 4, min_len: 4, keep_whole_ref: common.keep_whole}
+          - {op: drop_matching, rules_ref: common.person_invalid_patterns}
+          - {op: person_name, min_tokens: 1}
+          - {op: canon_by_freq, tight: true}
+          - {op: max_values, n: 3}
+      hasRecordLabel:
+        sources: ["details/Label", "details/Record Label", "details/Manufacturer"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - strip_roles
+          - {op: strip_parenthetical}
+          - {op: drop_long, max_len: 50}
+          - {op: canon_by_freq, tight: true}
+          - {op: fold_by_prefix, min_count: 10}
+          - {op: min_support, n: 3}
+      # hasGenre and hasMediaFormat must not be redefined here: YAML silently
+      # keeps the LAST key of the same name, which would override the lexicon
+      # definitions at the top of the block (the loader now refuses duplicate
+      # keys, see _load_yaml_strict).
+      hasColor: null
+      hasSize: null
+      hasMaterial: null
+
+  Cell_Phones_and_Accessories:
+    inherit: _generic
+    relations:
+      hasCompatibility:
+        sources: ["details/Compatible Devices", "details/Compatible Phone Models",
+                  "details/Cellular Technology", "details/Compatible Models"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: max_values, n: 4}
+      hasConnectivity:
+        sources: ["details/Connectivity Technology", "details/Wireless Communication Standard",
+                  "details/Connector Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_multi, separators: [",", ";", "/"]}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 3}
+      hasOperatingSystem:
+        sources: ["details/Operating System", "details/OS"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: regex_map, rules: [["^android.*", "Android"], [".*\\bios\\b.*", "iOS"],
+                                    ["^windows.*", "Windows"], ["^blackberry.*", "BlackBerry"]]}
+          - title_case
+          - {op: canon_by_freq}
+
+  Clothing_Shoes_and_Jewelry:
+    inherit: Amazon_Fashion
+    relations:
+      # Herite d'Amazon_Fashion : hasProductType, hasProductSubtype, hasColor
+      # and hasMaterial read the title with the SAME lexicons. It is the same
+      # domain, and one lexicon per category would make two vocabularies
+      # diverge that must stay comparable from one aisle to the next.
+      #
+      # hasSize is overridden to add to the sources the size fields specific
+      # to this category (shoe size, ring size, waist size) that fashion does
+      # not have.
+      hasSize:
+        sources: ["details/Size", "details/Size Name", "details/Shoe Size",
+                  "details/Ring Size", "details/Waist Size", "title"]
+        first_source_only: false
+        ops:
+          - {op: extract_sizes, unit: cm, max_terms: 4}
+          - {op: max_values, n: 4}
+
+  # hasMediaFormat was disabled here: its record field is empty on this
+  # category. It is now read from the title, so the category inherits from
+  # CDs_and_Vinyl without overriding anything.
+  Digital_Music:
+    inherit: CDs_and_Vinyl
+
+  Electronics:
+    inherit: Cell_Phones_and_Accessories
+    relations:
+      hasScreenSize:
+        sources: ["details/Screen Size", "details/Display Size"]
+        ops:
+          - {op: parse_numeric_bin, bins: [["<10\"", 0, 9.9], ["10-15\"", 10, 15.9],
+                                           ["16-24\"", 16, 24.9], ["25-40\"", 25, 40.9],
+                                           ["41-55\"", 41, 55.9], ["56\"+", 56, null]]}
+      hasResolution:
+        sources: ["details/Resolution", "details/Display Resolution Maximum",
+                  "details/Maximum Display Resolution"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: regex_map, rules: [[".*3840\\s*x\\s*2160.*|.*\\b4k\\b.*", "4K UHD"],
+                                    [".*1920\\s*x\\s*1080.*|.*\\b1080p?\\b.*", "Full HD 1080p"],
+                                    [".*1280\\s*x\\s*720.*|.*\\b720p?\\b.*", "HD 720p"],
+                                    [".*7680\\s*x\\s*4320.*|.*\\b8k\\b.*", "8K UHD"]]}
+          - {op: canon_by_freq}
+
+      # --- attributes revealed by `discover` on meta_Electronics.jsonl.gz ----
+      # Left for step 2 (unit conversion + binning): Memory Storage
+      # Capacity, RAM, Hard Drive, Standing screen display size, Voltage, Wattage.
+      hasFormFactor:
+        sources: ["details/Form Factor", "details/Shell Type", "details/Style Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 2}
+
+      hasPlatform:
+        sources: ["details/Hardware Platform", "details/Compatible Platform",
+                  "details/Operating System"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 2}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 3}
+
+      # 'Processor Brand' and 'Chipset Brand' carry the same vocabulary
+      # (Intel / AMD / NVIDIA / MediaTek): one single relation.
+      hasProcessorBrand:
+        sources: ["details/Processor Brand", "details/Chipset Brand",
+                  "details/CPU Manufacturer"]
+        first_source_only: true
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, table: {"intel": "Intel", "amd": "AMD", "nvidia": "NVIDIA",
+                              "mediatek": "MediaTek", "qualcomm": "Qualcomm",
+                              "apple": "Apple", "arm": "ARM", "broadcom": "Broadcom",
+                              "intel core": "Intel", "amd ryzen": "AMD"}}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasMemoryType:
+        sources: ["details/Computer Memory Type", "details/Memory Type",
+                  "details/RAM Memory Technology"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - upper
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+
+      hasSize: null
+
+  # ===========================================================================
+  # SPORTS & OUTDOORS
+  # Attributes and value tables from the normalisation rules of the project,
+  # which were produced on this category. To be confirmed with `discover` on
+  # the real file before the final build.
+  # ===========================================================================
+  Sports_and_Outdoors:
+    inherit: _generic
+    relations:
+      hasSportType:
+        sources: ["details/Sport Type", "details/Sport", "details/Activity",
+                  "details/Recommended Uses For Product"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 3}
+          - {op: map, rules_ref: sports.sport_type_map}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 3}
+
+      hasHandOrientation:
+        sources: ["details/Hand Orientation", "details/Handedness", "details/Hand"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: sports.hand_orientation_map}
+          - title_case
+          # CLOSED vocabulary: this attribute has only three legitimate
+          # values. Without this filter, the tail of the distribution held
+          # 'Pair', and even sizes ('M', 'XL', 'XXL') that sellers had put there.
+          - {op: keep_matching, patterns: ["^(Right|Left|Ambidextrous)$"]}
+          - {op: canon_by_freq}
+
+      hasSkillLevel:
+        sources: ["details/Skill Level", "details/Experience Level"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          # single quotes: in YAML the backslash is literal inside them
+          - {op: drop_matching, patterns: ['\d+\s*mm', '^\d']}   # ecarte '1.2mm x 2100mm' (doc V5)
+          - {op: map, rules_ref: sports.skill_level_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasFishingTechnique:
+        sources: ["details/Fishing Technique", "details/Fishing Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_long, max_len: 30}          # discards product descriptions
+          - {op: map, rules_ref: sports.fishing_technique_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasBikeType:
+        sources: ["details/Bike Type", "details/Bicycle Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: sports.bike_type_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasBrakeStyle:
+        sources: ["details/Brake Style", "details/Brake Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: sports.brake_style_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasWaterResistance:
+        sources: ["details/Water Resistance Level", "details/Water Resistance"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_matching, patterns: ['\d+\s*(millimeters?|mm|months?|meters?|mil|foot|stopa)']}
+          - {op: map, rules_ref: common.water_resistance_map}
+          - title_case
+          - {op: canon_by_freq}
+
+      hasUvProtection:
+        sources: ["details/UV Protection", "details/Uv Protection"]
+        ops:
+          - {op: map, rules_ref: common.uv_protection_map}
+          - title_case
+          - {op: keep_matching, patterns: ["^(Yes|No)$"]}
+
+      hasUsage:
+        sources: ["details/Indoor/Outdoor Usage", "details/Indoor Outdoor Usage",
+                  "details/Usage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: common.indoor_outdoor_map}
+          - title_case
+          - {op: canon_by_freq}
+
+      hasStrapType:
+        sources: ["details/Strap Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: common.strap_type_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasSeason:
+        sources: ["details/Seasons", "details/Season"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: common.seasons_map}
+          - title_case
+          - {op: canon_by_freq}
+
+      hasPattern:
+        sources: ["details/Pattern", "details/Print"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 4}
+          - {op: map, rules_ref: common.pattern_map}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+
+      hasShape:
+        sources: ["details/Shape", "details/Blade Shape"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: map, rules_ref: common.shape_map}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+
+      # --- attributes revealed by `discover` on meta_Sports_and_Outdoors -----
+      # Left for step 2 (unit conversion): Package Weight ('X Kilograms')
+      # and Capacity ('16 Ounces').
+      # Left for step 3 (boolean flags): Is Discontinued By
+      # Manufacturer. 'Warranty Description' is free text: discarded.
+      hasLeague:
+        sources: ["details/League", "details/Sports League"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          # 'ncaa', 'Ncaa', 'NCAA' coexist: canon_by_freq groups them
+          - upper
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasTeamName:
+        sources: ["details/Team Name", "details/Team"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq, tight: true}
+          - {op: min_support, n: 3}
+
+      hasTargetSpecies:
+        sources: ["details/Target Species", "details/Species"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 3}
+
+      hasModelYear:
+        sources: ["details/Model Year", "details/Year"]
+        ops:
+          - {op: keep_matching, patterns: ['^(19|20)\d{2}$']}
+
+      hasVehicleType:
+        sources: ["details/Vehicle Service Type", "details/Vehicle Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+  # ===========================================================================
+  # TOYS & GAMES
+  # No specification provided: generic base, to be refined with `discover`.
+  # ===========================================================================
+  Toys_and_Games:
+    inherit: _generic
+    relations:
+      hasCharacter:
+        sources: ["details/Character", "details/Cartoon Character", "details/Theme",
+                  "details/Franchise", "details/Subject Character"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+          - {op: max_values, n: 2}
+
+      hasEducationalObjective:
+        sources: ["details/Educational Objective", "details/Learning Skill",
+                  "details/Skill Level"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 10}
+
+      hasPlayerCount:
+        sources: ["details/Number of Players", "details/Player Count"]
+        ops:
+          - {op: parse_numeric_bin, bins: [["1 player", 1, 1], ["2 players", 2, 2],
+                                           ["3-4 players", 3, 4], ["5-8 players", 5, 8],
+                                           ["9+ players", 9, null]]}
+
+      # --- attributes revealed by `discover` on meta_Toys_and_Games ----------
+      # Left for step 2: Package Weight ('0.27 Kilograms').
+      # Left for step 4: Manufacturer Minimum Age (MONTHS), which gives the
+      # age in months and will feed hasAgeRange once age parsing is written.
+      hasReleaseYear:
+        sources: ["details/Release date", "details/Release Date"]
+        ops:
+          - {op: regex_map, whole: false, rules: [['^.*?\b((?:19|20)\d{2})\b.*$', '\1']]}
+          - {op: keep_matching, patterns: ['^(19|20)\d{2}$']}
+
+      # Toy safety warning (CPSIA standard). Very short vocabulary and
+      # directly relevant for a recommendation aimed at children.
+      hasSafetyWarning:
+        sources: ["details/CPSIA Cautionary Statement",
+                  "details/Safety Warning", "details/Warning"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: drop_matching, patterns: ["^no warning applicable$"]}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasPuzzleType:
+        sources: ["details/Puzzle type", "details/Puzzle Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+
+      hasLanguage:
+        sources: ["details/Language", "details/Languages"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: language_base}
+          - {op: map, rules_ref: common.generic_language_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}
+
+  # ===========================================================================
+  # VAGUE 2 (15/09) : huit categories supplementaires. Le socle _generic couvre
+  # marque, couleur, matiere, taille, audience, style, forme, classes de
+  # weight/volume/capacity, age, country, batteries, ...; each block only adds
+  # what `discover` revealed as specific (out_discover/<CAT>.discover.txt).
+  # ===========================================================================
+
+  Appliances:
+    inherit: _generic
+    relations:
+      hasVoltage:
+        sources: ["details/Voltage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - lower
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasFormFactor:
+        sources: ["details/Form Factor"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasCertification:
+        sources: ["details/Certification", "details/External Testing Certification"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 2}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasFuelType:
+        sources: ["details/Fuel type", "details/Fuel Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasControlType:
+        sources: ["details/Control Console", "details/Control Method", "details/Controller Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasCompatibleDevice:
+        sources: ["details/Compatible Devices"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  Grocery_and_Gourmet_Food:
+    inherit: _generic
+    relations:
+      hasFlavor:
+        sources: ["details/Flavor", "details/Flavor Name"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasPackaging:
+        sources: ["details/Package Information", "details/Package Type", "details/Container Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasSpecialty:
+        sources: ["details/Specialty", "details/Diet Type", "details/Dietary Speciality"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 4}
+      hasCaffeineContent:
+        sources: ["details/Caffeine Content"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasTeaVariety:
+        sources: ["details/Tea Variety"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasRoastLevel:
+        sources: ["details/Roast Level"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasAllergenInformation:
+        sources: ["details/Allergen Information"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  Handmade_Products:
+    inherit: _generic
+
+  Home_and_Kitchen:
+    inherit: _generic
+    relations:
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room", "details/Recommended Uses For Product"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasFrameMaterial:
+        sources: ["details/Frame Material", "details/Base Material", "details/Top Material Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasFrameType:
+        sources: ["details/Frame Type", "details/Bed Frame Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasAssemblyRequirement:
+        sources: ["details/Assembly Required", "details/Assembly required"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Assembly Required"}
+      hasDishwasherSafety:
+        sources: ["details/Is Dishwasher Safe", "details/Dishwasher Safe", "details/Dishwasher safe"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Dishwasher Safe"}
+      hasSeason:
+        sources: ["details/Seasons", "details/Season"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 4}
+      hasOrientation:
+        sources: ["details/Orientation"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasTopStyle:
+        sources: ["details/Top Style", "details/Arm Style", "details/Back Style", "details/Leg Style"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+  Industrial_and_Scientific:
+    inherit: _generic
+    relations:
+      hasMeasurementSystem:
+        sources: ["details/Measurement System"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasHeadStyle:
+        sources: ["details/Head Style", "details/Head Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasThreadSize:
+        sources: ["details/Thread Size"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasThreadType:
+        sources: ["details/Thread Type", "details/Thread Style"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasConnectorType:
+        sources: ["details/Connector Type", "details/Connectivity Technology"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasFastenerType:
+        sources: ["details/Fastener Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasDriveSystem:
+        sources: ["details/Drive System", "details/Drive Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasMetalType:
+        sources: ["details/Metal Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasCompatibleMaterial:
+        sources: ["details/Compatible Material"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  Gift_Cards:
+    inherit: _generic
+
+  Magazine_Subscriptions:
+    inherit: _generic
+
+  # Kindle Store : un livre numerique ; herite de Books (auteur, editeur,
+  # language, year, pages, category) and adds the Kindle features as
+  # booleans. hasFormat/hasEdition (read from 'subtitle') stay harmless.
+  Kindle_Store:
+    inherit: Books
+    relations:
+      hasTextToSpeech:
+        sources: ["details/Text to Speech", "details/Text-to-Speech"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Text to Speech"}
+      hasWordWise:
+        sources: ["details/Word Wise"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Word Wise"}
+      hasXRay:
+        sources: ["details/X Ray", "details/X-Ray"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "X-Ray"}
+      hasDeviceUsage:
+        sources: ["details/Simultaneous device usage", "details/Simultaneous Device Usage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+
+  # ===========================================================================
+  # Last ten categories: the _generic base plus the specific additions
+  # revealed by `discover`. Same operator patterns as above (split_smart for
+  # the multi-valued fields, canon_by_freq + min_support everywhere,
+  # boolean_flag for the yes/no fields, year regex for the dates).
+  # ===========================================================================
+
+  # Health & household: overlaps beauty (fragrance, skin type, form) --
+  # inherits from All_Beauty, and adds flavour, dosage form, use, diet.
+  Health_and_Household:
+    inherit: All_Beauty
+    relations:
+      hasFlavor:
+        sources: ["details/Flavor", "details/Flavor Name"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasPackaging:
+        sources: ["details/Package Information", "details/Package Type", "details/Container Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasDosageForm:
+        sources: ["details/Dosage Form", "details/Item Form"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasUse:
+        sources: ["details/Use for", "details/Use For", "details/Recommended Uses For Product"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasSpecialty:
+        sources: ["details/Diet Type", "details/Specialty", "details/Dietary Speciality"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 4}
+      hasSupplementType:
+        sources: ["details/Primary Supplement Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+  Health_and_Personal_Care:
+    inherit: Health_and_Household
+
+  Musical_Instruments:
+    inherit: _generic
+    relations:
+      hasInstrument:
+        sources: ["details/Instrument", "details/Instrument Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasNumberOfStrings:
+        sources: ["details/Number of Strings"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasBodyMaterial:
+        sources: ["details/Body Material", "details/Back Material", "details/Back Material Type",
+                  "details/Top Material", "details/Top Material Type", "details/Neck Material Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasFretboardMaterial:
+        sources: ["details/Fretboard Material", "details/Fretboard Material Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasStringMaterial:
+        sources: ["details/String Material", "details/String Material Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasHandOrientation:
+        sources: ["details/Hand Orientation"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasConnectorType:
+        sources: ["details/Connector Type", "details/Connectivity Technology"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasPolarPattern:
+        sources: ["details/Polar Pattern"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasInstrumentKey:
+        sources: ["details/Instrument Key"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasCompatibleDevice:
+        sources: ["details/Compatible Devices", "details/Hardware Platform"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  Office_Products:
+    inherit: _generic
+    relations:
+      hasInkColor:
+        sources: ["details/Ink Color"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasSheetSize:
+        sources: ["details/Sheet Size", "details/Paper Size"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasPointType:
+        sources: ["details/Point Type", "details/Tip Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasBinding:
+        sources: ["details/Binding"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasCompatibleDevice:
+        sources: ["details/Compatible Devices"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasCoverMaterial:
+        sources: ["details/Cover Material"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasRuling:
+        sources: ["details/Ruling", "details/Ruling Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasPaperFinish:
+        sources: ["details/Paper Finish"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+
+  Patio_Lawn_and_Garden:
+    inherit: _generic
+    relations:
+      hasAssemblyRequirement:
+        sources: ["details/Assembly Required", "details/Assembly required"]
+        first_source_only: true
+        ops:
+          - {op: boolean_flag, label: "Assembly Required"}
+      hasUsageLocation:
+        sources: ["details/Indoor/Outdoor Usage", "details/Indoor Outdoor Usage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasPlantType:
+        sources: ["details/Plant or Animal Product Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasFrameMaterial:
+        sources: ["details/Frame Material"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasSunlightExposure:
+        sources: ["details/Sunlight Exposure"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasMoistureNeeds:
+        sources: ["details/Moisture Needs"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasBloomingPeriod:
+        sources: ["details/Expected Blooming Period"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasHardinessZone:
+        sources: ["details/USDA Hardiness Zone"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasTargetSpecies:
+        sources: ["details/Target Species"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasSoilType:
+        sources: ["details/Soil Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasPlantingPeriod:
+        sources: ["details/Expected Planting Period"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  Pet_Supplies:
+    inherit: _generic
+    relations:
+      hasTargetSpecies:
+        sources: ["details/Target Species", "details/Specific Uses For Product"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasBreedRecommendation:
+        sources: ["details/Breed Recommendation"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasFlavor:
+        sources: ["details/Flavor", "details/Flavor Name"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 10, min_len: 3, keep_whole_ref: common.keep_whole}
+          - title_case
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+
+  # Software: the developer is a brand, the release date a year, the minimum
+  # system a platform.
+  Software:
+    inherit: _generic
+    relations:
+      hasDeveloper:
+        sources: ["details/Developed By"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 3}
+          - {op: max_values, n: 1}
+      hasReleaseYear:
+        sources: ["details/Release Date", "details/Date first listed on Amazon"]
+        first_source_only: true
+        ops:
+          - {op: regex_map, whole: false, rules: [["^.*?\\b((?:19|20)\\d{2})\\b.*$", "\\1"]]}
+          - {op: keep_matching, patterns: ["^(19|20)\\d{2}$"]}
+      hasMinimumOS:
+        sources: ["details/Minimum Operating System", "details/Operating System"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasApplicationPermission:
+        sources: ["details/Application Permissions"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 40}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 5}
+      hasLanguage:
+        sources: ["details/Language"]
+        ops:
+          - {op: drop_values, rules_ref: books.language_invalid}
+          - {op: language_base}
+          - {op: map, rules_ref: common.generic_language_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}
+
+  Subscription_Boxes:
+    inherit: _generic
+
+  Tools_and_Home_Improvement:
+    inherit: _generic
+    relations:
+      hasVoltage:
+        sources: ["details/Voltage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - lower
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasLightSourceType:
+        sources: ["details/Light Source Type", "details/Bulb Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasRoomType:
+        sources: ["details/Room Type", "details/Recommended Room"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 4}
+          - title_case
+          - {op: drop_long, max_len: 24}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasShadeMaterial:
+        sources: ["details/Shade Material"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasUsageLocation:
+        sources: ["details/Indoor/Outdoor Usage", "details/Indoor Outdoor Usage"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasControlType:
+        sources: ["details/Control Method", "details/Controller Type", "details/Control Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasPlugFormat:
+        sources: ["details/Plug Format", "details/Plug Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasSwitchType:
+        sources: ["details/Switch Installation Type", "details/Switch Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasLightFixtureForm:
+        sources: ["details/Light fixture form", "details/Light Fixture Form"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasHandleMaterial:
+        sources: ["details/Handle Material"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasFinishType:
+        sources: ["details/Finish types", "details/Finish Types"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+
+  # Jeux video : type d'article (jeu, console, accessoire), classification
+  # ESRB, annee de sortie, plateforme.
+  Video_Games:
+    inherit: _generic
+    relations:
+      hasItemType:
+        sources: ["details/Type of item", "details/Item Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasContentRating:
+        sources: ["details/Rated", "details/ESRB Rating"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasReleaseYear:
+        sources: ["details/Release date", "details/Release Date", "details/Date First Available"]
+        first_source_only: true
+        ops:
+          - {op: regex_map, whole: false, rules: [["^.*?\\b((?:19|20)\\d{2})\\b.*$", "\\1"]]}
+          - {op: keep_matching, patterns: ["^(19|20)\\d{2}$"]}
+      hasPlatform:
+        sources: ["details/Hardware Platform", "details/Compatible Devices", "details/Platform"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - {op: drop_long, max_len: 30}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 3}
+      hasConnectivity:
+        sources: ["details/Connectivity Technology", "details/Connector Type"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasOperatingSystem:
+        sources: ["details/Operating System"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasControlType:
+        sources: ["details/Controller Type", "details/Control Method"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - {op: split_smart, strong: [";", "|"], weak: [",", "/", " & ", " and "],
+             min_evidence: 5, min_len: 3}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 2}
+      hasFormFactor:
+        sources: ["details/Form Factor"]
+        ops:
+          - {op: drop_values, rules_ref: common.invalid_values}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: min_support, n: 5}
+          - {op: max_values, n: 1}
+      hasLanguage:
+        sources: ["details/Language"]
+        ops:
+          - {op: drop_values, rules_ref: books.language_invalid}
+          - {op: language_base}
+          - {op: map, rules_ref: common.generic_language_map}
+          - title_case
+          - {op: canon_by_freq}
+          - {op: max_values, n: 2}

@@ -1,0 +1,23 @@
+{
+ "algo": "KGCN",
+ "dataset": "M3KG-AKGsubset-Books",
+ "seed": 2024,
+ "best_valid_score": 0.0393,
+ "best_valid_result": {
+  "recall@20": 0.1318,
+  "mrr@20": 0.0393,
+  "ndcg@20": 0.0571,
+  "hit@20": 0.1494,
+  "precision@20": 0.0077
+ },
+ "test_result": {
+  "recall@20": 0.1307,
+  "mrr@20": 0.04,
+  "ndcg@20": 0.0573,
+  "hit@20": 0.1484,
+  "precision@20": 0.0077
+ },
+ "duration_s": 12507,
+ "date": "2026-09-12 23:03",
+ "device": "cuda:0"
+}

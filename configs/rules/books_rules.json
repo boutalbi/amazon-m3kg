@@ -1,0 +1,333 @@
+{
+  "_comment": "Books normalisation rules (Amazon Reviews 2023).",
+  "author_invalid_patterns": [
+    "publishing",
+    "publishers",
+    "\\bpress\\b",
+    "\\bbooks\\b",
+    "\\bmedia\\b",
+    "\\bllc\\b",
+    "\\binc\\b",
+    "\\bltd\\b",
+    "university press",
+    "editors of",
+    "see more",
+    "various",
+    "\\bstaff\\b",
+    "\\bassociation\\b",
+    "\\bsociety\\b"
+  ],
+  "category_map": {
+    "fiction books": "Fiction",
+    "general fiction": "Fiction",
+    "genre fiction": "Fiction",
+    "non fiction": "Non-Fiction",
+    "nonfiction": "Non-Fiction"
+  },
+  "format_map": {
+    "audible audiobook": "Audiobook",
+    "audio cd": "Audiobook",
+    "board book": "Board Book",
+    "ebook": "Ebook",
+    "hard cover": "Hardcover",
+    "hardcover": "Hardcover",
+    "kindle edition": "Ebook",
+    "library binding": "Hardcover",
+    "loose leaf": "Loose Leaf",
+    "mass market paperback": "Paperback",
+    "mp3 cd": "Audiobook",
+    "paperback": "Paperback",
+    "print length": "Ebook",
+    "softcover": "Paperback",
+    "spiral-bound": "Spiral-bound",
+    "trade paperback": "Paperback"
+  },
+  "language_invalid": [
+    "Unqualified",
+    "Unknown",
+    "",
+    "N/A",
+    "None"
+  ],
+  "language_mappings": {
+    "Anglais": "English",
+    "English (Publication Language)": "English",
+    "Multilingual": "Multilingual",
+    "Unqualified": ""
+  },
+  "page_bins": [
+    [
+      "0-50",
+      1,
+      50
+    ],
+    [
+      "50-100",
+      51,
+      100
+    ],
+    [
+      "100-150",
+      101,
+      150
+    ],
+    [
+      "150-200",
+      151,
+      200
+    ],
+    [
+      "200+",
+      201,
+      null
+    ]
+  ],
+  "person_invalid_patterns": [
+    "see more",
+    "publishing",
+    "publishers",
+    "\\bpress\\b",
+    "\\bbooks inc\\b",
+    "\\bmedia\\b",
+    "\\bllc\\b",
+    "\\binc\\b",
+    "\\bltd\\b",
+    "university press",
+    "editors of",
+    "\\bcompany\\b",
+    "\\bcorporation\\b"
+  ],
+  "person_invalid_values": [
+    "Various",
+    "Various Authors",
+    "Unknown",
+    "Anonymous",
+    "N/A",
+    "None",
+    "Author",
+    "Editor",
+    "Editors",
+    "Staff",
+    "Inc.",
+    "LLC"
+  ],
+  "person_mappings": {
+    "Agatha Christie Ltd": "Agatha Christie",
+    "Dr. Seuss": "Dr. Seuss",
+    "Gabriel Garcia Marquez": "Gabriel García Márquez",
+    "George R. R. Martin": "George R.R. Martin",
+    "Haruki Murakami (Author)": "Haruki Murakami",
+    "J. K. Rowling": "J.K. Rowling",
+    "J. R. R. Tolkien": "J.R.R. Tolkien",
+    "J.K.Rowling": "J.K. Rowling",
+    "J.R.R.Tolkien": "J.R.R. Tolkien",
+    "JK Rowling": "J.K. Rowling",
+    "Joanne K. Rowling": "J.K. Rowling",
+    "R.R. Martin": "George R.R. Martin",
+    "Rowling J.K.": "J.K. Rowling",
+    "Seuss": "Dr. Seuss",
+    "Stephen E. King": "Stephen King",
+    "Theodor Seuss Geisel": "Dr. Seuss"
+  },
+  "person_mc_mac_exceptions": [
+    "macy",
+    "mackie",
+    "macaulay",
+    "mace",
+    "machado"
+  ],
+  "publisher_groups": {
+    "Andrews McMeel": [
+      "andrewsmcmeel"
+    ],
+    "Cambridge University Press": [
+      "cambridgeuniversitypress"
+    ],
+    "Cengage": [
+      "cengage",
+      "coursetechnology",
+      "delmar",
+      "brookscole"
+    ],
+    "Chronicle Books": [
+      "chroniclebooks"
+    ],
+    "DC Comics": [
+      "dccomics"
+    ],
+    "Dover Publications": [
+      "doverpublications",
+      "dover"
+    ],
+    "Elsevier": [
+      "elsevier",
+      "academicpress",
+      "morgankaufmann",
+      "saunders",
+      "mosby"
+    ],
+    "Hachette Book Group": [
+      "hachette",
+      "littlebrown",
+      "grandcentral",
+      "orbit",
+      "basicbooks",
+      "perseusbooks",
+      "runningpress",
+      "yenpress",
+      "publicaffairs",
+      "hyperion",
+      "warnerbooks"
+    ],
+    "Harlequin": [
+      "harlequin",
+      "mira books",
+      "carinapress"
+    ],
+    "HarperCollins": [
+      "harpercollins",
+      "harperperennial",
+      "harperbusiness",
+      "harpervoyager",
+      "harperone",
+      "williammorrow",
+      "avonbooks",
+      "ecco",
+      "harpercollinse",
+      "harper"
+    ],
+    "Independently published": [
+      "independentlypublished",
+      "createspace",
+      "kindledirectpublishing",
+      "kdp",
+      "lulu",
+      "amazondigital",
+      "amazonpublishing",
+      "selfpublished"
+    ],
+    "Kensington": [
+      "kensington",
+      "zebrabooks"
+    ],
+    "Macmillan": [
+      "macmillan",
+      "stmartin",
+      "stmartins",
+      "farrarstrausgiroux",
+      "fsg",
+      "henryholt",
+      "tordotcom",
+      "torbooks",
+      "picador",
+      "flatironbooks",
+      "celadonbooks",
+      "minotaurbooks"
+    ],
+    "Marvel": [
+      "marvel"
+    ],
+    "McGraw-Hill": [
+      "mcgrawhill",
+      "mcgraw"
+    ],
+    "National Geographic": [
+      "nationalgeographic"
+    ],
+    "O'Reilly Media": [
+      "oreilly",
+      "oreillymedia"
+    ],
+    "Oxford University Press": [
+      "oxforduniversitypress",
+      "oup"
+    ],
+    "Pearson": [
+      "pearson",
+      "prenticehall",
+      "addisonwesley",
+      "peachpit"
+    ],
+    "Penguin Random House": [
+      "penguin",
+      "randomhouse",
+      "knopf",
+      "doubleday",
+      "crown",
+      "vikingpress",
+      "viking",
+      "ballantine",
+      "bantam",
+      "delrey",
+      "dutton",
+      "putnam",
+      "riverhead",
+      "berkley",
+      "anchorbooks",
+      "vintage",
+      "pantheon",
+      "dial press"
+    ],
+    "Rodale": [
+      "rodale"
+    ],
+    "SAGE Publications": [
+      "sagepublications",
+      "sage"
+    ],
+    "Scholastic": [
+      "scholastic"
+    ],
+    "Simon & Schuster": [
+      "simonschuster",
+      "simonandschuster",
+      "scribner",
+      "atriabooks",
+      "atria",
+      "pocketbooks",
+      "gallerybooks",
+      "touchstone books",
+      "freepress",
+      "howardbooks",
+      "aladdin"
+    ],
+    "Sourcebooks": [
+      "sourcebooks",
+      "casablanca"
+    ],
+    "Springer": [
+      "springer",
+      "apress",
+      "birkhauser",
+      "palgrave"
+    ],
+    "Taylor & Francis": [
+      "routledge",
+      "crcpress",
+      "taylorfrancis"
+    ],
+    "Thieme": [
+      "thieme"
+    ],
+    "Viz Media": [
+      "vizmedia",
+      "viz"
+    ],
+    "Wiley": [
+      "wiley",
+      "johnwiley",
+      "sybex",
+      "jossey"
+    ],
+    "Wolters Kluwer": [
+      "lippincott",
+      "woltersk"
+    ],
+    "Workman Publishing": [
+      "workman",
+      "algonquin",
+      "artisanbooks",
+      "timberpress"
+    ]
+  }
+}

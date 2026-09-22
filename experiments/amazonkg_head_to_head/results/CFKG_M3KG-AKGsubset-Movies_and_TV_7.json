@@ -1,0 +1,23 @@
+{
+ "algo": "CFKG",
+ "dataset": "M3KG-AKGsubset-Movies_and_TV",
+ "seed": 7,
+ "best_valid_score": 0.0556,
+ "best_valid_result": {
+  "recall@20": 0.1689,
+  "mrr@20": 0.0556,
+  "ndcg@20": 0.0763,
+  "hit@20": 0.196,
+  "precision@20": 0.0105
+ },
+ "test_result": {
+  "recall@20": 0.1666,
+  "mrr@20": 0.0552,
+  "ndcg@20": 0.0749,
+  "hit@20": 0.1942,
+  "precision@20": 0.0105
+ },
+ "duration_s": 4861,
+ "date": "2026-09-15 01:34",
+ "device": "cuda:0"
+}
