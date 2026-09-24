@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 r"""Opens a file of a category, whether it sits in the output folder or in a
-global zip archive (one <CAT>.zip per category, stored without recompression).
+zip archive (one <CAT>.zip per category).
 
     from archive_reader import set_output_dir, open_file, available_categories
     set_output_dir("out")                          # default: ./out_final
@@ -10,8 +10,10 @@ global zip archive (one <CAT>.zip per category, stored without recompression).
     with open_file("Books", "recbole/Books.inter") as fh: ...
 
 The output folder is read first; the archive, if present, is the fallback.
-Its outer members are stored uncompressed (ZIP_STORED), so an inner ZipFile
-can be opened on them without extracting anything; reading stays streamed.
+It may be a global zip holding one <CAT>.zip per category, or a folder of
+<CAT>.zip files. In the global zip the members are stored uncompressed
+(ZIP_STORED), so an inner ZipFile can be opened on them without extracting
+anything; reading stays streamed either way.
 
 The folder can also be set with the M3KG_OUT environment variable, and the
 archive with M3KG_ARCHIVE.
@@ -37,10 +39,22 @@ def set_output_dir(dossier, archive=None):
 
 
 def _archive():
+    """The global zip, or None when ARCHIVE is a folder or is missing."""
     global _EXTERNE
-    if _EXTERNE is None and os.path.exists(ARCHIVE):
+    if _EXTERNE is None and os.path.isfile(ARCHIVE):
         _EXTERNE = zipfile.ZipFile(ARCHIVE)
     return _EXTERNE
+
+
+def _zip_categorie(cat):
+    """ZipFile of the category, taken from the global zip or from the folder."""
+    z = _archive()
+    if z is not None:
+        if cat + ".zip" not in z.namelist():
+            return None
+        return zipfile.ZipFile(z.open(cat + ".zip"))
+    seul = os.path.join(ARCHIVE, cat + ".zip")
+    return zipfile.ZipFile(seul) if os.path.isfile(seul) else None
 
 
 def available_categories():
@@ -51,6 +65,16 @@ def available_categories():
     z = _archive()
     if z is not None:
         cats |= {n[:-4] for n in z.namelist() if n.endswith(".zip")}
+    elif os.path.isdir(ARCHIVE):
+        for n in os.listdir(ARCHIVE):
+            if not n.endswith(".zip"):
+                continue
+            c = n[:-4]
+            try:
+                if c + ".report.json" in zipfile.ZipFile(os.path.join(ARCHIVE, n)).namelist():
+                    cats.add(c)
+            except zipfile.BadZipFile:
+                pass
     return sorted(cats)
 
 
@@ -65,11 +89,8 @@ def open_file(cat, membre, encoding="utf-8"):
         nom_zip = cat + membre
     if os.path.exists(local):
         return io.open(local, encoding=encoding, errors="replace")
-    z = _archive()
-    if z is None or cat + ".zip" not in z.namelist():
-        return None
-    interne = zipfile.ZipFile(z.open(cat + ".zip"))
-    if nom_zip not in interne.namelist():
+    interne = _zip_categorie(cat)
+    if interne is None or nom_zip not in interne.namelist():
         return None
     return io.TextIOWrapper(interne.open(nom_zip), encoding=encoding, errors="replace")
 
